@@ -1,0 +1,178 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+# File: gcc-wrapper
+
+#   Copyright (C) 2010 David Hauweele <david.hauweele@gmail.com>
+#
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful, but
+#   WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# GCC wrapper so it always disable debug
+
+import os
+import sys
+import subprocess as sp
+
+GCC_PATH = "/usr/bin/gcc-4.6"
+GCC_FAIL = "/usr/bin/gcc-4.5"
+
+###################
+MARCH  = "core2"
+MTUNE  = "core2"
+OLEVEL = "O3"
+OFP    = True
+MSSE   = True
+MSSE2  = True
+MSSE3  = True
+MSSE4  = True
+
+KRN_OLEVEL = "O2"
+###################
+
+PACKAGE = "gcc-wrapper"
+VERSION = "0.2-git"
+
+def main():
+    global OLEVEL
+    global MSSE
+    global MSSE2
+    global MSSE3
+    global MSSE4
+    global OFP
+    global MARCH
+    global MTUNE
+    global KRN_OLEVEL
+    
+    opts = [ GCC_PATH ]
+
+    # Options specific to gcc-wrapper
+    for i in sys.argv[1:]:
+        if i == "--wrapper":
+            print PACKAGE + " " + VERSION
+            print "Copyright (C) 2011 David Hauweele <david.hauweele@gmail.com>"
+            print ""
+            print "Options :"
+            print " * gcc main      : " + GCC_PATH
+            print " * gcc failback  : " + GCC_FAIL
+            print " * march/mtune   : " + MARCH + "/" + MTUNE
+            print " * SSE           : " + str(MSSE)
+            print " * SSE2          : " + str(MSSE2)
+            print " * SSE3          : " + str(MSSE3)
+            print " * SSE4          : " + str(MSSE4)
+            print " * OFP           : " + str(OFP)
+            print " * OLEVEL main   : " + OLEVEL
+            print " * OLEVEL kernel : " + KRN_OLEVEL
+            print ""
+            print "Modes"
+            print "  \____ (main)           : nothing added, use gcc main"
+            print "  \____ INSANE_STATIC    : use insane static compilation flags (whole-program with flto)"
+            print "  \____ OPTIMIZE         : force main attributes, flags, level and disable debug"
+            print "   \____ KERNEL_OPTIMIZE : use kernel level attribute, march/mtune and disable nasty flags"
+            print "   \____ INSANE_OPTIMIZE : use non standard optimization and Ofast (with gcc-4.6)"
+            print ""
+            print "Selected"
+            use_default = True
+            if "OPTIMIZE" in os.environ.keys():
+                print "  \____ OPTIMIZE"
+                use_default = False
+            if "KERNEL_OPTIMIZE" in os.environ.keys():
+                print "  \____ KERNEL_OPTIMIZE"
+                use_default = False
+            if "INSANE_OPTIMIZE" in os.environ.keys():
+                print "  \____ INSANE_OPTIMIZE"
+                use_default = False
+            if "INSANE_STATIC" in os.environ.keys():
+                print "  \____ INSANE STATIC"
+                use_default = False
+            if use_default:
+                print "  \____ (main)"
+                use_default = False
+            sys.exit(0)
+    if "INSANE_OPTIMIZE" in os.environ.keys():
+        opts.append("-fassociative-math")
+        opts.append("-freciprocal-math")
+        opts.append("-ffinite-math-only")
+        OLEVEL="Ofast"
+    if "INSANE_STATIC" in os.environ.keys():
+        opts.append("-flto")
+        opts.append("-fwhole-program")
+    if "KERNEL_OPTIMIZE" in os.environ.keys():
+        MSSE   = False      # Do not append sse
+        MSSE2  = False      # Nor sse2
+        MSSE3  = False      # Nor sse3
+        MSSE4  = False      # Nor sse4
+        OFP    = True       # Omit frame pointer
+        OLEVEL = KRN_OLEVEL # Avoid gcc doing nasty
+                            # things with critical sections...
+        opts.append("-march="+MARCH) # Force processor
+        opts.append("-mtune="+MTUNE) # to specified arch
+    if "OPTIMIZE" in os.environ.keys():
+        #opts.append("-fuse-linker-plugin")
+        for i in sys.argv[1:]:
+            if i == "-Os":
+                opts.append("-" + OLEVEL)
+            elif i == "-O0":
+                opts.append("-" + OLEVEL)
+            elif i == "-O1":
+                opts.append("-" + OLEVEL)
+            elif i == "-O2":
+                opts.append("-" + OLEVEL)
+            elif i == "-g":
+                opts.append("-g0")
+            elif i[:7] == "-march=":
+                opts.append("-march="+MARCH)
+            elif i[:7] == "-mtune=":
+                opts.append("-mtune="+MTUNE)
+            else:
+                opts.append(i)
+        opts.append("-march="+MARCH)
+        opts.append("-mtune="+MTUNE)
+        if OFP and "-fomit-frame-pointer" not in opts:
+            opts.append("-fomit-frame-pointer")
+        if MSSE and "-msse" not in opts:
+            opts.append("-msse")
+        if MSSE2 and "-msse2" not in opts:
+            opts.append("-msse2")
+        if MSSE3 and "-msse3" not in opts:
+            opts.append("-msse3")
+        if MSSE4 and "-msse4" not in opts:
+            opts.append("-msse4")
+    else:
+        for i in sys.argv[1:]:
+            opts.append(i)
+    ret = sp.call(opts,stdout=sys.stdout,stderr=sys.stderr,stdin=sys.stdin)
+    if ret and "OPTIMIZE" in os.environ.keys():
+        print "Something goes bad, trying again with gcc-main (without -flto)"
+        opts[0] = GCC_PATH
+        for i in xrange(len(opts)):
+            if opts[i] == "-flto":
+                opts[i] = "-O" + OLEVEL
+    else:
+        return ret
+    ret = sp.call(opts,stdout=sys.stdout,stderr=sys.stderr,stdin=sys.stdin)
+    if ret:
+        print "It goes really bad, trying with gcc-failback"
+        opts[0] = GCC_FAIL
+    else:
+        print "Recovered with gcc-main ! :) Yipi !"
+        return ret
+    ret = sp.call(opts,stdout=sys.stdout,stderr=sys.stderr,stdin=sys.stdin)
+    if ret:
+        print "OOPS ! Error with gcc-failback, nothing could save you now..."
+    else:
+        print "Recovered with gcc-main ! :) Yipi !"
+        return ret
+    return ret
+if __name__ == "__main__":
+    main()
