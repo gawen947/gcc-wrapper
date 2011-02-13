@@ -130,7 +130,7 @@ def main():
                 opts.append("-" + OLEVEL)
             elif i == "-O3":
                 opts.append("-" + OLEVEL)
-            elif i == "-g":
+            elif i == "-g" || i[:-1] == "-ggdb":
                 opts.append("-g0")
             elif i[:7] == "-march=":
                 opts.append("-march="+MARCH)
