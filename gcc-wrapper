@@ -18,163 +18,534 @@
 #   You should have received a copy of the GNU General Public License
 #   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# GCC wrapper so it always disable debug
-
 import os
 import sys
 import subprocess as sp
-
-GCC_PATH = "/usr/bin/gcc-4.6"
-GCC_FAIL = "/usr/bin/gcc-4.5"
-
-###################
-MARCH  = "core2"
-MTUNE  = "core2"
-OLEVEL = "O3"
-OFP    = True
-MSSE   = True
-MSSE2  = True
-MSSE3  = True
-MSSE4  = True
-
-KRN_OLEVEL = "O2"
-###################
+import ConigParser as cp
 
 PACKAGE = "gcc-wrapper"
-VERSION = "0.2-git"
+VERSION = "0.3-git"
+
+"""
+Expression are evaluated right-to-left
+Type qualifier:
+  + : Append the following expression to the end of the command line (default)
+  - : Remove each option from the command line which satisfies the following
+      expression
+Type specifier:
+  = : Use the following expression as is (default)
+  ! : Negate the following expression
+Example:
+  -!debug : this will append a rule to remove every omitted debug
+  Note that ++!debug, --!=!@debug are valid then results in +!debug, -=debug
+  and -+!debug is valid to since evaluation order only the last specifier plays
+  a role so it gives -!debug"""
+TYPE_SPECIFIER = "!@"
+TYPE_QUALIFIER = "+-"
+
+def warn(message):
+    print >> sys.stderr, PACKAGE + ": " + message
+
+def err(exit_value, message):
+    warn(message)
+    sys.exit(exit_value)
+
+def reverse(string):
+    return ''.join(reversed(string))
+
+class Relation:
+    def __init__(self, name, omit_name, compiler):
+        """
+        Initialise a Relation object which represents a relation between
+        an option an a compiler
+        @param name: name of the option for this compiler
+        @param omit_name: name for omitting (explicitly disable) this option
+        @param compiler: the compiler which can use this option"""
+
+        self.name      = name
+        self.omit_name = omit_name
+        self.compiler  = compiler
+
+    def get_name(self): return self.name
+    def get_omit_name(self): return self.omit_name
+    def get_compiler(self): return self.compiler
+
+class Option:
+    def __init__(self, alias):
+        """
+        Initialise an Option object
+        @param alias: An alias for this option in the configuration file"""
+
+        self.relation = []
+
+    @staticmethod
+    def load(path, compilers):
+        """
+        Load the option configuration file from path
+        @param path: A path to the option configuration file
+        @param compilers: A dictionary of compilers
+        @return: A dictionary with option alias as the key"""
+
+        if type(compilers) != type(dict):
+            raise ValueError("Invalid compilers list !")
+
+        if not os.path.isfile(path):
+            raise FileNotFound("Option configuration file '%s' not found" % \
+                               (path,))
+        parser = cp.RawConfigParser()
+
+        try:
+            parser.read(path)
+        except cp.ParsingError:
+            warn("Parse error on option configuration file '%s'" % (path,))
+            raise cp.ParsingError
+
+        res = {}
+
+        for section in parser.sections():
+            if parser.has_option(section, "name"):
+                try:
+                    name = parser.get(section, "name", "str")
+                except cp.ParsingError:
+                    warn("%s: Invalid name option in '%s', " \
+                         "omitted" % (path, section))
+                    continue
+            else:
+                warn("%s: Name not provided in '%s', omitted" % (path,     \
+                                                                 section))
+                continue
+
+            if parser.has_option(section, "omit"):
+                try:
+                    omit = parser.get(section, "omit", "str")
+                except cp.ParsingError:
+                    warn("%s: Invalid omit option in '%s', " \
+                         "omitted" % (path, section))
+                    continue
+            else:
+                warn("%s: Omit not provided in '%s', "
+                     "omitted" % (path, section))
+                continue
+
+            if parser.has_option(section, "compiler"):
+                try:
+                    compiler = parser.get(section, "compiler", "str")
+                except cp.ParsingError:
+                    warn("%s: Invalid compiler option in '%s', " \
+                         "omitted" % (path, section))
+                    continue
+            else:
+                warn("%s: Compiler not provided in '%s', "
+                     "omitted" % (path, section))
+                continue
+
+            if compiler not in compilers.keys():
+                warn("%s: Compiler option in '%s' does not exists, omitted" % \
+                     (path, section))
+                continue
+
+            if section not in res.keys(): # relation on new option
+                res[section] = Option(section)
+            res[section].add(name, omit, compilers[compiler])
+
+        return res
+
+    @staticmethod
+    def print(options):
+        """
+        Print available options in the options dictionnary
+        @param options: The options dictionnary to print"""
+
+        if type(options) != type(dict):
+            raise ValueError("Invalid options list !")
+
+        print "Options"
+        for alias in options.keys():
+            print " \_ " + alias
+
+
+    def add(self, name, omit_name, *compilers):
+        """
+        Add this option as supported for every specified compiler
+        @param name: name of this option for gcc
+        @param omit_name: name for omitting (explicitly disable) this option
+        @param compilers: variable list of arguments which specifies compilers
+        which can use this option"""
+
+        for compiler in compilers:
+            self.relation.append(Relation(name, omit_name, compiler))
+
+    def get_relations(self):
+        """
+        Get relations in a dictionary with compiler as key
+        @return: A dictionary of relations with compiler as key"""
+
+        res = {}
+        for relation in self.relation:
+            res[relation.get_compiler()] = relation
+        return res
+
+class OptionElement:
+    def __init__(self, alias, value, opt_type):
+        """
+        Initialise an OptionElement object (from configuration file)
+        @param alias: Alias in configuration file
+        @param value: Value from config file if provided
+        @param opt_type: Option type qualifiers/specifiers"""
+
+        self.alias = alias
+        self.value = value
+        self.type  = opt_type
+
+    def get_alias(self): return self.alias
+    def get_value(self): return self.value
+    def get_type(self): return self.type
+
+class Profile:
+    def __init__(self, env):
+        """
+        Initialise a Profile object
+        @param env: Environment variable to be exported to enable
+        this profile"""
+
+        self.env     = env
+        self.options = []
+
+    @staticmethod
+    def load(path, options):
+        """
+        Load the profile configuration file from path
+        @param path: A path to the profile configuration file
+        @param compilers: A dictionary of available options
+        @return: A dictionary with profile alias as the key"""
+
+        if type(compilers) != type(dict):
+            raise ValueError("Invalid options list !")
+
+        if not os.path.isfile(path):
+            raise FileNotFound("Profile configuration file '%s' not found" % \
+                               (path,))
+        parser = cp.RawConfigParser()
+
+        try:
+            parser.read(path)
+        except cp.ParsingError:
+            warn("Parse error on profile configuration file '%s'" % (path,))
+            raise cp.ParsingError
+
+        res = {}
+
+        for section in parser.sections():
+            if parser.has_option(section, "$env"):
+                try:
+                    env = parser.get(section, "$env", "str")
+                except cp.ParsingError:
+                    warn("%s: Invalid env option in '%s', " \
+                         "omitted" % (path, section))
+                    continue
+            else:
+                env = section
+
+            if parser.has_option(section, "$include"):
+                try:
+                    include = parser.get(section, "$include", "str")
+                except cp.ParsingError:
+                    warn("%s: Invalid $include option in '%s', " \
+                         "omitted" % (path, section))
+                    continue
+            else:
+                include = None
+
+            res[section] = Profile(env)
+
+            # load options
+            for option in parser.options(section):
+                if option not in options.keys():
+                    warn("%s: %s option in '%s' does not exists, omitted" % \
+                         (path, option, section))
+                    continue
+
+                # extract option type specifiers/qualifiers
+                opt_type = ""
+                for i in xrange(len(option)):
+                    if option[i] not in (TYPE_SPECIFIER + TYPE_QUALIFIER):
+                        opt_type = option[:i]
+
+                res[section].add(option, parser.get(section, option), opt_type)
+
+            if include not in res.keys():
+                warn("%s: %s profile does not exists in include directive in " \
+                     "'%s', omitted" % (path, section))
+                continue
+
+            res[section].apply_inheritance(res[include])
+
+        return res
+
+    @staticmethod
+    def print(profiles):
+        """
+        Print available profiles in the profiles dictionnary
+        @param compilers: The profiles dictionnary to print"""
+
+        if type(profiles) != type(dict):
+            raise ValueError("Invalid profiles list !")
+
+        print "Profiles"
+        for alias in profiles.keys():
+            print " \_ " + alias
+
+
+    def add(self, alias, value = None, opt_type = None):
+        """
+        Add an option element to this profile
+        @param alias: Alias for the option
+        @param value: Value for this alias
+        @param opt_type: Option type specifier"""
+
+        self.options.add(OptionElement(alias, value, opt_type))
+
+    def get_options(self): return tuple(self.options)
+
+    def apply_inheritance(self, super):
+        """
+        Add another Profile to the current one, in other words
+        this means applying inheritance
+        @param super: The super-profile of this profile"""
+
+        if type(super) != type(self):
+            raise ValueError("Invalid super-profile !")
+        for option in super.get_options():
+            self.options.append(option)
+
+    def apply_cmdline(self, cmdline, options, compiler):
+        """
+        Apply the current profile to the list of arguments specified
+        @param cmdline: A list of arguments to apply this profile to
+        @param options: A dictionary of options
+        @param compiler: A compiler to use for this options
+        @return: A tuple containing the new arguments list"""
+
+        res = []
+        for arg in cmdline:
+            for option in self.options:
+                # extract qualifiers
+                opt_type = option.get_type()
+                qualifiers = ""
+                for i in xrange(len(opt_type)):
+                    if opt_type[i] not in TYPE_QUALIFIER:
+                        qualifiers = opt_type[:i]
+                        opt_type = opt_type[i:]
+
+                # extract specifiers
+                specifiers = ""
+                for i in xrange(len(opt_type)):
+                    if opt_type[i] not in TYPE_SPECIFIER:
+                        specifiers = opt_type[:i]
+                        opt_type = opt_type[i:]
+                if opt_type != "":
+                    err(1, "%s: Syntax error for option '%s', invalid " \
+                        "specifiers/qualifiers" % (self.env, option.get_alias))
+
+                # apply specifiers
+                relation = option.get_relations()[compiler]
+                expression_negation = False
+                specifiers = reverse(specifiers)
+                for c in specifiers:
+                    if c in "=":
+                        pass
+                    elif c in "!":
+                        expression_negation = not expression_negation
+                if expression_negation == True:
+                    expression = relation.get_omit()
+                else: # expression_negation == False
+                    expression = relation.get_name()
+
+                # apply qualifiers
+                qualifiers = reverse(qualifiers)
+                remove = False
+                for c in qualifiers:
+                    if c in "+":
+                        remove = False
+                    elif c in "-":
+                        remove = True
+
+                if remove and expression != args:
+                    res.append(args):
+
+        # append options
+        for option in self.options:
+            # extract qualifiers
+            opt_type = option.get_type()
+            qualifiers = ""
+            for i in xrange(len(opt_type)):
+                if opt_type[i] not in TYPE_QUALIFIER:
+                    qualifiers = opt_type[:i]
+                    opt_type = opt_type[i:]
+
+            # extract specifiers
+            specifiers = ""
+            for i in xrange(len(opt_type)):
+                if opt_type[i] not in TYPE_SPECIFIER:
+                    specifiers = opt_type[:i]
+                    opt_type = opt_type[i:]
+            if opt_type != "":
+                err(1, "%s: Syntax error for option '%s', invalid " \
+                    "specifiers/qualifiers" % (self.env, option.get_alias))
+
+            # apply specifiers
+            relation = option.get_relations()[compiler]
+            expression_negation = False
+            specifiers = reverse(specifiers)
+            for c in specifiers:
+                if c in "=":
+                    pass
+                elif c in "!":
+                    expression_negation = not expression_negation
+            if expression_negation == True:
+                expression = relation.get_omit()
+            else: # expression_negation == False
+                expression = relation.get_name()
+
+            # apply qualifiers
+            qualifiers = reverse(qualifiers)
+            remove = False
+            for c in qualifiers:
+                if c in "+":
+                    remove = False
+                elif c in "-":
+                    remove = True
+
+            if not remove
+                res.append(expression):
+        return res
+
+class Compiler:
+    def __init__(self, alias, path, priority):
+        """
+        Initialise a Compiler object
+        @param alias: An alias for this compiler in the configuration file
+        @param path: Path for executing this compiler
+        @param priority: Priority of this compiler"""
+
+        if not os.path.isfile(path):
+            raise FileNotFound("Compiler path '%s' not found" % (path,))
+        self.path     = path
+        self.priority = priority
+
+    @staticmethod
+    def load(path, common):
+        """
+        Load the compiler configuration file from path
+        @param path: A path to the compiler configuration file
+        @param common: Common options
+        @return: A dictionary with compiler alias as the key"""
+
+        if type(common) != type(CommonConfig):
+            raise ValueError("Invalid common-config instance !")
+
+        if not os.path.isfile(path):
+            raise FileNotFound("Compiler configuration file '%s' not found" % \
+                               (path,))
+        parser = cp.RawConfigParser()
+
+        try:
+            parser.read(path)
+        except cp.ParsingError:
+            warn("Parse error on compiler configuration file '%s'" % (path,))
+            raise cp.ParsingError
+
+        res = {}
+
+        for section in parser.sections():
+            if parser.has_option(section, "prio"):
+                try:
+                    prio = parser.get(section, "prio", "int")
+                except cp.ParsingError:
+                    warn("%s: Invalid prio option in '%s', default used " \
+                         "instead" % (path, section))
+                    prio = common.get_prio()
+            else:
+                prio = common.get_prio()
+
+            if parser.has_option(section, "path"):
+                try:
+                    path = parser.get(section, "path", "str")
+                except cp.ParsingError:
+                    warn("%s: Invalid path option in '%s', omitted" % (path,   \
+                                                                       section))
+                    continue
+            else:
+                warn("%s: Path not provided in '%s', omitted" % (path, section))
+                continue
+
+            res[section] = Compiler(section, path, prio)
+
+        return res
+
+    @staticmethod
+    def prio_sort(compilers):
+        """
+        Sort the compilers dictionary based in a tuple based on the key
+        @param compilers: A dictionary of compilers to sort
+        @return: A tuple of compilers sorted by key in ascending order"""
+
+        if type(compilers) != type(dict):
+            raise ValueError("Invalid compilers list !")
+
+        sort = []
+        for compiler in compilers.keys():
+            if type(compiler) != type(Compiler):
+                raise ValueError("Invalid compiler instance in compiler list !")
+
+            sort.append((compiler, compiler.get_priority()))
+        sorted(sort, key = lambda x : x[1]) # sort by priority
+
+        return map(lambda x : x[0], sort)
+
+    @staticmethod
+    def print(compilers):
+        """
+        Print available compilers in the compilers dictionnary
+        @param compilers: The compilers dictionnary to print"""
+
+        if type(compilers) != type(dict):
+            raise ValueError("Invalid compilers list !")
+
+        print "Compilers"
+        for compiler in Compiler.prio_sort(compilers):
+            print " \_ " + compiler.get_alias()
+
+    def execute_string(self, opts):
+        """
+        Return the command that will be executed as a string without
+        executing it
+        @param opts: Options to pass to the compiler as array of string"""
+
+        res = self.path
+        for opt in opts:
+            res += " " + opt
+        return res
+
+    def execute(self, opts):
+        """
+        Execute this compiler with the specified options as arguments
+        @param opts: Options to pass to the compiler as array of string
+        @return: The return value of the compiler"""
+
+        return sp.call([self.path] + opts,
+                       stdout=sys.stdout,
+                       stderr=sys.stderr,
+                       stdin=sys.stdin)
+
+    def get_alias(self): return self.alias
+    def get_path(self): return self.path
+    def get_priority(self): return self.priority
 
 def main():
-    global OLEVEL
-    global MSSE
-    global MSSE2
-    global MSSE3
-    global MSSE4
-    global OFP
-    global MARCH
-    global MTUNE
-    global KRN_OLEVEL
-    
-    opts = [ GCC_PATH ]
+    pass
 
-    # Options specific to gcc-wrapper
-    for i in sys.argv[1:]:
-        if i == "--wrapper":
-            print PACKAGE + " " + VERSION
-            print "Copyright (C) 2011 David Hauweele <david.hauweele@gmail.com>"
-            print ""
-            print "Options :"
-            print " * gcc main      : " + GCC_PATH
-            print " * gcc failback  : " + GCC_FAIL
-            print " * march/mtune   : " + MARCH + "/" + MTUNE
-            print " * SSE           : " + str(MSSE)
-            print " * SSE2          : " + str(MSSE2)
-            print " * SSE3          : " + str(MSSE3)
-            print " * SSE4          : " + str(MSSE4)
-            print " * OFP           : " + str(OFP)
-            print " * OLEVEL main   : " + OLEVEL
-            print " * OLEVEL kernel : " + KRN_OLEVEL
-            print ""
-            print "Modes"
-            print "  \____ (main)           : nothing added, use gcc main"
-            print "  \____ INSANE_STATIC    : use insane static compilation flags (whole-program with flto)"
-            print "  \____ OPTIMIZE         : force main attributes, flags, level and disable debug"
-            print "   \____ KERNEL_OPTIMIZE : use kernel level attribute, march/mtune and disable nasty flags"
-            print "   \____ INSANE_OPTIMIZE : use non standard optimization and Ofast (with gcc-4.6)"
-            print ""
-            print "Selected"
-            use_default = True
-            if "OPTIMIZE" in os.environ.keys():
-                print "  \____ OPTIMIZE"
-                use_default = False
-            if "KERNEL_OPTIMIZE" in os.environ.keys():
-                print "  \____ KERNEL_OPTIMIZE"
-                use_default = False
-            if "INSANE_OPTIMIZE" in os.environ.keys():
-                print "  \____ INSANE_OPTIMIZE"
-                use_default = False
-            if "INSANE_STATIC" in os.environ.keys():
-                print "  \____ INSANE STATIC"
-                use_default = False
-            if use_default:
-                print "  \____ (main)"
-                use_default = False
-            sys.exit(0)
-    if "INSANE_OPTIMIZE" in os.environ.keys():
-        opts.append("-fassociative-math")
-        opts.append("-freciprocal-math")
-        opts.append("-ffinite-math-only")
-        OLEVEL="Ofast"
-    if "INSANE_STATIC" in os.environ.keys():
-        opts.append("-flto")
-        opts.append("-fwhole-program")
-    if "KERNEL_OPTIMIZE" in os.environ.keys():
-        MSSE   = False      # Do not append sse
-        MSSE2  = False      # Nor sse2
-        MSSE3  = False      # Nor sse3
-        MSSE4  = False      # Nor sse4
-        OFP    = True       # Omit frame pointer
-        OLEVEL = KRN_OLEVEL # Avoid gcc doing nasty
-                            # things with critical sections...
-        opts.append("-march="+MARCH) # Force processor
-        opts.append("-mtune="+MTUNE) # to specified arch
-    if "OPTIMIZE" in os.environ.keys():
-        #opts.append("-fuse-linker-plugin")
-        for i in sys.argv[1:]:
-            if i == "-Os":
-                opts.append("-" + OLEVEL)
-            elif i == "-O0":
-                opts.append("-" + OLEVEL)
-            elif i == "-O1":
-                opts.append("-" + OLEVEL)
-            elif i == "-O2":
-                opts.append("-" + OLEVEL)
-            elif i == "-O3":
-                opts.append("-" + OLEVEL)
-            elif i == "-g" or i[:-1] == "-ggdb":
-                opts.append("-g0")
-            elif i[:7] == "-march=":
-                opts.append("-march="+MARCH)
-            elif i[:7] == "-mtune=":
-                opts.append("-mtune="+MTUNE)
-            else:
-                opts.append(i)
-        opts.append("-march="+MARCH)
-        opts.append("-mtune="+MTUNE)
-        if OFP and "-fomit-frame-pointer" not in opts:
-            opts.append("-fomit-frame-pointer")
-        if MSSE and "-msse" not in opts:
-            opts.append("-msse")
-        if MSSE2 and "-msse2" not in opts:
-            opts.append("-msse2")
-        if MSSE3 and "-msse3" not in opts:
-            opts.append("-msse3")
-        if MSSE4 and "-msse4" not in opts:
-            opts.append("-msse4")
-    else:
-        for i in sys.argv[1:]:
-            opts.append(i)
-    ret = sp.call(opts,stdout=sys.stdout,stderr=sys.stderr,stdin=sys.stdin)
-    if ret and "OPTIMIZE" in os.environ.keys():
-        print "Something goes bad, trying again with gcc-main (without -flto)"
-        opts[0] = GCC_PATH
-        for i in xrange(len(opts)):
-            if opts[i] == "-flto":
-                opts[i] = "-O" + OLEVEL
-    else:
-        return ret
-    ret = sp.call(opts,stdout=sys.stdout,stderr=sys.stderr,stdin=sys.stdin)
-    if ret:
-        print "It goes really bad, trying with gcc-failback"
-        opts[0] = GCC_FAIL
-    else:
-        print "Recovered with gcc-main ! :) Yipi !"
-        return ret
-    ret = sp.call(opts,stdout=sys.stdout,stderr=sys.stderr,stdin=sys.stdin)
-    if ret:
-        print "OOPS ! Error with gcc-failback, nothing could save you now..."
-    else:
-        print "Recovered with gcc-main ! :) Yipi !"
-        return ret
-    return ret
 if __name__ == "__main__":
     main()
+
+class FileNotFound(IOError): pass
