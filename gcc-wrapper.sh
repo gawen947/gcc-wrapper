@@ -107,13 +107,13 @@ do
 
             exit 0
             ;;
-        --march=*)
+        -march=*)
             if [ -z "$MARCH" ]
             then
                 newcmd="$newcmd $arg"
             fi
             ;;
-        --mtune=*)
+        -mtune=*)
             if [ -z "$MTUNE" ]
             then
                 newcmd="$newcmd $arg"
@@ -138,18 +138,17 @@ do
             fi
             ;;
         *)
-            echo "other"
-            ;;
+            newcmd="$newcmd $arg";;
     esac
 done
 
 if [ -n "$MARCH" ]
 then
-    newcmd="$newcmd --march=$MARCH"
+    newcmd="$newcmd -march=$MARCH"
 fi
 if [ -n "$MTUNE" ]
 then
-    newcmd="$newcmd --mtune=$MTUNE"
+    newcmd="$newcmd -mtune=$MTUNE"
 fi
 if [ -n "$OLEVEL" ]
 then

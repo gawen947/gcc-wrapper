@@ -3,7 +3,9 @@
 
 if [ -f "/usr/bin/gcc.real" -o -f "/usr/bin/g++.real" ]
 then
-  echo "Already installed..."
+  echo "Already installed, update..."
+  cp gcc-wrapper.sh /usr/local/bin/gcc-wrapper
+  chmod a+rx /usr/local/bin/gcc-wrapper
 else
   echo "Installing..."
   dpkg-divert --add --rename --divert "/usr/bin/gcc.real" "/usr/bin/gcc"
