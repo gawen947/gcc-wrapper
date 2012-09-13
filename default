@@ -1,0 +1,39 @@
+# Short description of this profile.
+DESCRIPTION="Default GCC profile"
+
+# Path to the executable of gcc to use with this profile.
+GCC=$(which gcc.real)
+
+# GCC use this name to determine what kind of instructions it
+# can emit when generating assembly code. 
+# The value of this flag won't be changed if it is left empty.
+MARCH=""
+
+# Tune everything applicable about the generated code, except
+# the ABI and the set of available instructions.
+# The value of this flag won't be changed if it is left empty.
+MTUNE=""
+
+# Optimisation level, consult GCC handbook for more infos about
+# specific optimisation level. Possible values are Os O0 O1 O2 O3 and 
+# Ofast. The value of this flag won't be changed if it is left empty.
+OLEVEL=""
+
+# Avoid saving the frame pointer for functions that don't need one.
+# It may makes debugging impossible on some architectures.
+# It's now enabled automatically at level O2 and Os.
+# Any non empty string here means yes. An empty string will leave
+# the flag unchanged.
+FRAME_POINTER=""
+
+# Enable debugging informations to be added to the resulting object files.
+# Possible values are yes, no or an empty string. The debugging flag will
+# be respectively explicitly enabled, disabled or left unchanged.
+DEBUG=""
+
+# The type of information to add when debugging should be explicitly enabled.
+# The default value is "-g3 -ggdb".
+DEBUG_LEVEL=""
+
+# Extra informations to add to the gcc command line.
+EXTRA="-pipe"
