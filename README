@@ -1,0 +1,13 @@
+A wrapper to GCC to override compilation options
+================================================
+
+The wrapper uses a compilation profile which can be setted with the GCC_PROFIL
+environnement variable. This environnement variable will select a profile file
+located in /etc/gcc-wrapper (global profiles) or ~/.config/gcc-wrapper (user
+profiles). The current profil cbn be found with gcc --wrapper.
+
+The installation script will divert gcc on debian and install the default
+profile.  This default profile gives an insight about the available control
+options. The script also works on other distribution but you should install the
+script by yourself. You should divert gcc with this script and place the real
+gcc executable somewhere else.
