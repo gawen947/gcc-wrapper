@@ -1,6 +1,14 @@
 A wrapper to GCC to override compilation options
 ================================================
 
+This script was originnaly made to override and add more optimizations control
+to complex compilation scripts. It can be used to create a more finely tuned
+executable for a specific architecture. It can also be used to disable forced
+otimizations options and add debug informations for test purpose. Another use
+could be the creation of cross compilation profiles to quickly switch from one
+architecture to another. The main benefit being that it can quickly bypass
+incomplete or buggy compilation script directly from the compiler point of view.
+
 The wrapper uses a compilation profile which can be setted with the GCC_PROFIL
 environnement variable. This environnement variable will select a profile file
 located in /etc/gcc-wrapper (global profiles) or ~/.config/gcc-wrapper (user
@@ -11,3 +19,28 @@ profile.  This default profile gives an insight about the available control
 options. The script also works on other distribution but you should install the
 script by yourself. You should divert gcc with this script and place the real
 gcc executable somewhere else.
+
+Why SH
+======
+
+When I first wrote this script, I wrote it in Python. There was no profile and
+it was just a little work around for a very specific project. So when I started
+to extend the script I began with Python too. But it quickly became very
+verbose. There were classes, module, profile parser, ... And it had to be
+structured so because the language itself demanded it. So it can be easy to
+maintain and extend. But I was wrong for the language itself demanded
+nothing. The main argument behind this fallacy was that it would have been a
+real waste of ressources to use such a powerful scripting language for such a
+mere thing without any valuable reason. So I guess I just invented one then with
+some complex and useless design underlying. And although I choose Python for its
+simplicity in the first place, I was just gone with the wrong language from the
+beginning. I've since learned to listen to such manifestation of a muffled
+intuition. Therefore did I rewrite this from scratch with a tiny shell script.
+And it is now simpler, clearer and faster.
+
+I often read that shell script are fragile, non portable and insecure. Should it
+be a complex project I would agree but if you may keep it that simple at the
+cost of slight modification from one architecture to another I don't see any
+reason not doing it. Clearly there are not one size fits all solution but shell
+scripts are a perfectly reliable and fast option as long as you can keep it
+simple and portability is not an absolute priority.
