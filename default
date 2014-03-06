@@ -2,7 +2,7 @@
 DESCRIPTION="Default GCC profile"
 
 # Path to the executable of gcc to use with this profile.
-GCC=$(which gcc.real)
+GCC=$(which $0.real)
 
 # GCC use this name to determine what kind of instructions it
 # can emit when generating assembly code. 
