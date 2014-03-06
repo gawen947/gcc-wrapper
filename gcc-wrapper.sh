@@ -1,3 +1,4 @@
+#!/bin/sh
 # File: gcc-wrapper.sh
 #  Time-stamp: <2012-09-13 20:10:01 gawen>
 #
